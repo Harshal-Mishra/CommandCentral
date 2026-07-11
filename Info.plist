@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.harshalmishra.commandcentral</string>
+	<key>CFBundleName</key>
+	<string>Command Central</string>
+	<key>CFBundleDisplayName</key>
+	<string>Command Central</string>
+	<key>CFBundleExecutable</key>
+	<string>CommandCentral</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.8.0</string>
+	<key>CFBundleVersion</key>
+	<string>8</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Command Central talks to Spotify or Music to show what’s playing and control playback.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Command Central shows your upcoming calendar events on the dashboard.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Command Central shows your upcoming calendar events on the dashboard.</string>
+</dict>
+</plist>
