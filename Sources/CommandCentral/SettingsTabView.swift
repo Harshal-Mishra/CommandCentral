@@ -2,6 +2,7 @@ import ServiceManagement
 import SwiftUI
 
 struct SettingsTabView: View {
+    @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var tracker: TimeTracker
     @EnvironmentObject private var clipboard: ClipboardStore
     @EnvironmentObject private var links: LinkStore
@@ -21,6 +22,7 @@ struct SettingsTabView: View {
         ScrollView {
             HStack(alignment: .top, spacing: 14) {
                 VStack(spacing: 14) {
+                    appearanceCard
                     generalCard
                     locationCard
                     aboutCard
@@ -32,6 +34,71 @@ struct SettingsTabView: View {
                     linksCard
                 }
             }
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceCard: some View {
+        Card(title: "Appearance", systemImage: "paintbrush") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Accent color")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(AccentChoice.allCases) { choice in
+                        Button {
+                            settings.accent = choice
+                        } label: {
+                            Circle()
+                                .fill(choice.color)
+                                .frame(width: 22, height: 22)
+                                .overlay(Circle().strokeBorder(
+                                    .white.opacity(settings.accent == choice ? 0.9 : 0),
+                                    lineWidth: 2))
+                        }
+                        .buttonStyle(.plain)
+                        .help(choice.name)
+                    }
+                }
+                Text("Background")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                HStack(spacing: 8) {
+                    ForEach(BackgroundChoice.allCases) { choice in
+                        Button {
+                            settings.background = choice
+                        } label: {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(choice.gradient)
+                                .frame(width: 44, height: 26)
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
+                                    settings.background == choice ? .white.opacity(0.9) : Theme.cardStroke,
+                                    lineWidth: settings.background == choice ? 2 : 1))
+                        }
+                        .buttonStyle(.plain)
+                        .help(choice.name)
+                    }
+                }
+                Divider()
+                Toggle("Show tab names in the tab bar", isOn: $settings.tabLabels)
+                    .toggleStyle(.switch)
+                Toggle("Show seconds on the clock", isOn: $settings.showSeconds)
+                    .toggleStyle(.switch)
+                Toggle("Show battery in the header", isOn: $settings.showBattery)
+                    .toggleStyle(.switch)
+                Divider()
+                Picker("Open on tab", selection: $settings.defaultTab) {
+                    ForEach(DashboardTab.allCases) { tab in
+                        Text(tab.title).tag(tab)
+                    }
+                }
+                Text("Which tab the dashboard shows when the app starts.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 12))
         }
     }
 
@@ -134,17 +201,36 @@ struct SettingsTabView: View {
                 .onChange(of: hotkeyIndex) {
                     NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                 }
-                Text("Changes apply immediately, everywhere on your Mac.")
+                Toggle("⇧⌘S takes a snip (global)", isOn: $settings.snipHotkey)
+                    .toggleStyle(.switch)
+                    .onChange(of: settings.snipHotkey) {
+                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                    }
+                Text("Changes apply immediately, everywhere on your Mac. Turn the snip shortcut off if another app needs ⇧⌘S.")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 Divider()
                 Toggle("Capture clipboard history", isOn: $clipboard.capturing)
                     .toggleStyle(.switch)
+                Picker("Clipboard history size", selection: $settings.clipboardLimit) {
+                    ForEach([20, 50, 100, 200], id: \.self) { size in
+                        Text("\(size) items").tag(size)
+                    }
+                }
                 Divider()
                 Stepper("Daily study goal: \(formatHM(tracker.dailyGoalMinutes * 60))",
                         value: Binding(get: { tracker.dailyGoalMinutes },
                                        set: { tracker.setGoal($0) }),
                         in: 15...720, step: 15)
+                Picker("Auto-stop tracking when idle", selection: $settings.idleAutoStopMinutes) {
+                    Text("Off").tag(0)
+                    ForEach([3, 5, 10, 15], id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+                Text("Walking away pauses the study stopwatch so idle time never counts.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
             }
             .font(.system(size: 12))
         }

@@ -34,6 +34,11 @@ final class CommandEngine {
             return [journalCommand()]
         }
 
+        // "ss" → Snip & Sketch, Windows-style.
+        if query.lowercased() == "ss" {
+            return SnipStore.Mode.allCases.map { snipCommand($0) }
+        }
+
         var results: [Command] = []
 
         // "task buy milk" / "todo buy milk" → add a task
@@ -126,6 +131,7 @@ final class CommandEngine {
 
         for task in state.tasks.openTasks {
             consider(task.title, toggleTaskCommand(task))
+            consider("track " + task.title, trackTaskCommand(task))
         }
         if state.timer.isRunning {
             consider("stop focus timer", stopTimerCommand())
@@ -176,10 +182,9 @@ final class CommandEngine {
                                            subtitle: "Full system sleep",
                                            icon: "moon.fill",
                                            exec: "/usr/bin/pmset", args: ["sleepnow"]))
-        consider("screenshot capture area", shellCommand(id: "screenshot", title: "Screenshot Area → Clipboard",
-                                                         subtitle: "Drag to select; lands on your clipboard",
-                                                         icon: "camera.viewfinder",
-                                                         exec: "/usr/sbin/screencapture", args: ["-ic"]))
+        for mode in SnipStore.Mode.allCases {
+            consider("ss snip screenshot sketch capture \(mode.title.lowercased())", snipCommand(mode))
+        }
         consider("empty trash", scriptCommand(id: "trash", title: "Empty Trash",
                                               subtitle: "Asks Finder to empty the Trash",
                                               icon: "trash",
@@ -328,6 +333,17 @@ final class CommandEngine {
         }
     }
 
+    private func trackTaskCommand(_ task: TaskItem) -> Command {
+        Command(id: "track-task-\(task.id.uuidString)",
+                title: "Track: \(task.title)",
+                subtitle: "Stopwatch on this task — logs to \(task.subject ?? state.tracker.subjects.first ?? "Other")",
+                icon: .symbol("record.circle")) { [state] in
+            state.tracker.startStopwatch(task.subject ?? state.tracker.subjects.first ?? "Other",
+                                         detail: task.title,
+                                         taskId: task.id)
+        }
+    }
+
     private func stopTrackingCommand() -> Command {
         Command(id: "stop-tracking",
                 title: "Stop Tracking \(state.tracker.activeSubject ?? "")",
@@ -400,6 +416,15 @@ final class CommandEngine {
                 subtitle: "Added to your Notes tab",
                 icon: .symbol("note.text.badge.plus")) { [state] in
             state.notes.add(text: text)
+        }
+    }
+
+    private func snipCommand(_ mode: SnipStore.Mode) -> Command {
+        Command(id: "snip-\(mode.rawValue)",
+                title: "Snip: \(mode.title)",
+                subtitle: mode.subtitle + " — saved to Snips & copied",
+                icon: .symbol(mode.icon)) { [state] in
+            state.startSnip(mode)
         }
     }
 

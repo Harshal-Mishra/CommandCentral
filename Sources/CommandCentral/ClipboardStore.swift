@@ -14,8 +14,17 @@ final class ClipboardStore: ObservableObject {
 
     private var changeCount = NSPasteboard.general.changeCount
     private var timer: Timer?
-    private let maxItems = 50
+    private var maxItems = 50
     private let maxLength = 2000
+
+    /// Set from AppSettings; trims existing history when lowered.
+    func setLimit(_ limit: Int) {
+        maxItems = max(5, limit)
+        if items.count > maxItems {
+            items.removeLast(items.count - maxItems)
+            save()
+        }
+    }
 
     private var fileURL: URL { Storage.directory.appendingPathComponent("clipboard.json") }
 

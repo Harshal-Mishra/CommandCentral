@@ -28,11 +28,12 @@ final class QuakeStore: ObservableObject {
     }
 
     func startMonitoring() {
+        guard timer == nil else { return }
         refresh()
-        timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        timer?.tolerance = 60
     }
 
     func stopMonitoring() {

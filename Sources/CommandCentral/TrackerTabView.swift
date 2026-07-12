@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TrackerTabView: View {
     @EnvironmentObject private var tracker: TimeTracker
+    @EnvironmentObject private var tasks: TaskStore
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -27,22 +28,35 @@ struct TrackerTabView: View {
 
     // MARK: - Today
 
+    private var tasksDoneToday: Int {
+        tasks.items.filter { $0.doneAt.map(Calendar.current.isDateInToday) ?? false }.count
+    }
+
     private var todayCard: some View {
         Card(title: "Today", systemImage: "sun.max",
              trailing: formatHM(tracker.todaySeconds)) {
-            let breakdown = tracker.bySubjectToday()
-            if breakdown.isEmpty {
-                Text("No study time logged yet today")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 5) {
-                    let maxSeconds = breakdown.first?.seconds ?? 1
-                    ForEach(breakdown, id: \.subject) { entry in
-                        SubjectBar(subject: entry.subject,
-                                   seconds: entry.seconds,
-                                   fraction: Double(entry.seconds) / Double(maxSeconds))
+            VStack(alignment: .leading, spacing: 8) {
+                let breakdown = tracker.bySubjectToday()
+                if breakdown.isEmpty {
+                    Text("No study time logged yet today")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 5) {
+                        let maxSeconds = breakdown.first?.seconds ?? 1
+                        ForEach(breakdown, id: \.subject) { entry in
+                            SubjectBar(subject: entry.subject,
+                                       seconds: entry.seconds,
+                                       fraction: Double(entry.seconds) / Double(maxSeconds))
+                        }
                     }
+                }
+                if tasksDoneToday > 0 {
+                    Divider()
+                    Label("\(tasksDoneToday) task\(tasksDoneToday == 1 ? "" : "s") completed today",
+                          systemImage: "checkmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -123,7 +137,9 @@ struct TrackerTabView: View {
 
 struct TrackNowCard: View {
     @EnvironmentObject private var tracker: TimeTracker
+    @EnvironmentObject private var tasks: TaskStore
     @State private var selectedSubject = ""
+    @State private var selectedTaskId: UUID?
     @State private var newSubject = ""
 
     var body: some View {
@@ -166,14 +182,27 @@ struct TrackNowCard: View {
                             ForEach(tracker.subjects, id: \.self) { Text($0) }
                         }
                         .labelsHidden()
-                        Button {
-                            tracker.startStopwatch(selectedSubject)
-                        } label: {
+                        Button(action: start) {
                             Label("Start", systemImage: "play.fill")
                         }
                         .buttonStyle(.borderedProminent)
                     }
-                    Text("Focus Timer sessions are logged automatically too — pick a subject on the timer.")
+                    if !tasks.openTasks.isEmpty {
+                        Picker("", selection: $selectedTaskId) {
+                            Text("No task — just the subject").tag(UUID?.none)
+                            ForEach(tasks.openTasks) { task in
+                                Text(task.title).tag(Optional(task.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .onChange(of: selectedTaskId) {
+                            if let task = tasks.openTasks.first(where: { $0.id == selectedTaskId }),
+                               let subject = task.subject {
+                                selectedSubject = subject
+                            }
+                        }
+                    }
+                    Text("Pick a task to pin the session to it. Focus Timer sessions are logged automatically too.")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
@@ -199,6 +228,12 @@ struct TrackNowCard: View {
                 selectedSubject = tracker.subjects.first ?? "Other"
             }
         }
+    }
+
+    private func start() {
+        let task = tasks.openTasks.first { $0.id == selectedTaskId }
+        tracker.startStopwatch(selectedSubject, detail: task?.title, taskId: task?.id)
+        selectedTaskId = nil
     }
 
     private func addSubject() {
@@ -236,11 +271,19 @@ private struct FlowChips: View {
 // MARK: - Breakdown
 
 struct SubjectBreakdownCard: View {
+    private enum Mode: String, CaseIterable, Identifiable {
+        case subjects = "Subjects"
+        case tasks = "Tasks"
+        var id: String { rawValue }
+    }
+
     @EnvironmentObject private var tracker: TimeTracker
+    @EnvironmentObject private var tasks: TaskStore
     @State private var range: StatsRange = .week
+    @State private var mode: Mode = .subjects
 
     var body: some View {
-        Card(title: "By Subject", systemImage: "chart.pie",
+        Card(title: "Breakdown", systemImage: "chart.pie",
              trailing: formatHM(tracker.seconds(in: range))) {
             VStack(spacing: 10) {
                 Picker("", selection: $range) {
@@ -248,29 +291,110 @@ struct SubjectBreakdownCard: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                let breakdown = tracker.bySubject(range)
-                if breakdown.isEmpty {
-                    Text("Nothing tracked in this period yet — hit Start or run a focus timer.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 20)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 6) {
-                            let maxSeconds = breakdown.first?.seconds ?? 1
-                            ForEach(breakdown, id: \.subject) { entry in
-                                SubjectBar(subject: entry.subject,
-                                           seconds: entry.seconds,
-                                           fraction: Double(entry.seconds) / Double(maxSeconds))
-                            }
-                        }
-                    }
-                    .frame(maxHeight: .infinity)
+                Picker("", selection: $mode) {
+                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                switch mode {
+                case .subjects: subjectList
+                case .tasks: taskList
                 }
             }
             .frame(maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var subjectList: some View {
+        let breakdown = tracker.bySubject(range)
+        if breakdown.isEmpty {
+            Text("Nothing tracked in this period yet — hit Start or run a focus timer.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 20)
+        } else {
+            ScrollView {
+                VStack(spacing: 6) {
+                    let maxSeconds = breakdown.first?.seconds ?? 1
+                    ForEach(breakdown, id: \.subject) { entry in
+                        SubjectBar(subject: entry.subject,
+                                   seconds: entry.seconds,
+                                   fraction: Double(entry.seconds) / Double(maxSeconds))
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var taskList: some View {
+        let totals = tracker.byTask(range)
+        if totals.isEmpty {
+            Text("No task time in this period — press ▶ on a task, or pick one in Track Now.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 20)
+        } else {
+            ScrollView {
+                VStack(spacing: 6) {
+                    let maxSeconds = totals.first?.seconds ?? 1
+                    ForEach(totals) { entry in
+                        TaskTotalRow(entry: entry,
+                                     done: isDone(entry),
+                                     fraction: Double(entry.seconds) / Double(maxSeconds))
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    private func isDone(_ entry: TimeTracker.TaskTotal) -> Bool {
+        guard let taskId = entry.taskId else { return false }
+        return tasks.items.first { $0.id == taskId }?.done ?? false
+    }
+}
+
+private struct TaskTotalRow: View {
+    let entry: TimeTracker.TaskTotal
+    let done: Bool
+    let fraction: Double
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle.dashed")
+                .font(.system(size: 12))
+                .foregroundStyle(done ? Theme.accent : .secondary)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(entry.title)
+                        .font(.system(size: 12))
+                        .strikethrough(done)
+                        .lineLimit(1)
+                    Text(entry.subject)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Text(formatHM(entry.seconds))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.rowFill)
+                        Capsule()
+                            .fill(Theme.accent.gradient)
+                            .frame(width: max(4, geo.size.width * fraction))
+                    }
+                }
+                .frame(height: 5)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -331,19 +455,23 @@ struct RecentSessionsCard: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // Two rows — one long row of controls can outgrow this
+                    // card on narrower windows.
                     HStack(spacing: 6) {
                         Picker("", selection: $manualSubject) {
                             ForEach(tracker.subjects, id: \.self) { Text($0) }
                         }
                         .labelsHidden()
-                        .frame(width: 100)
                         TextField("min", text: $manualMinutes)
                             .textFieldStyle(.roundedBorder)
                             .controlSize(.small)
                             .frame(width: 44)
+                    }
+                    HStack(spacing: 6) {
                         DatePicker("", selection: $manualDate, displayedComponents: .date)
                             .labelsHidden()
                             .controlSize(.small)
+                        Spacer(minLength: 0)
                         Button("Add") { addManual() }
                             .controlSize(.small)
                             .disabled(Int(manualMinutes) == nil)

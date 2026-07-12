@@ -4,7 +4,7 @@ import AppKit
 /// activating the app, Spotlight-style.
 final class PalettePanel: NSPanel {
     init(contentView: NSView) {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 620, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered,
                    defer: false)

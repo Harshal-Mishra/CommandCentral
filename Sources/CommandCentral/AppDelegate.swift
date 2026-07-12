@@ -1,11 +1,13 @@
 import AppKit
 import Carbon.HIToolbox
+import ScreenCaptureKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PalettePanel!
     private var hotKey: HotKey?
+    private var snipHotKey: HotKey?
     private var dashboard: DashboardWindowController!
     private var journalWindow: JournalWindowController?
     let state = AppState()
@@ -13,6 +15,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .darkAqua)
+
+        // Registers the app in System Settings → Privacy & Security →
+        // Screen & System Audio Recording and shows the grant dialog when
+        // access is missing (snips need it). Modern TCC only registers the
+        // app on a real ScreenCaptureKit attempt — the legacy
+        // CGRequestScreenCaptureAccess call is not enough.
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+            Task {
+                _ = try? await SCShareableContent.excludingDesktopWindows(false,
+                                                                          onScreenWindowsOnly: true)
+            }
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -22,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let content = PaletteView()
             .environmentObject(state)
+            .environmentObject(state.settings)
             .environmentObject(state.tasks)
             .environmentObject(state.timer)
         panel = PalettePanel(contentView: NSHostingView(rootView: content))
@@ -30,6 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dashboard = DashboardWindowController(state: state)
 
         state.hidePalette = { [weak self] in self?.hidePalette() }
+        state.paletteResize = { [weak self] size in
+            guard let self, self.panel.frame.size != size else { return }
+            var frame = self.panel.frame
+            frame.origin.y = frame.maxY - size.height
+            frame.size = size
+            self.panel.setFrame(frame, display: true)
+        }
         state.showDashboard = { [weak self] in self?.dashboard.show() }
         state.showDashboardTab = { [weak self] tab in
             self?.dashboard.show()
@@ -48,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.clipboard.start()
         state.sleep.start()
         state.alarms.start()
+        state.stats.startBatteryWatch()
         NotificationCenter.default.addObserver(forName: .alarmFired, object: nil,
                                                queue: .main) { [weak self] _ in
             self?.dashboard.show()
@@ -77,6 +101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let preset = HotKeyPreset.current
         hotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers) { [weak self] in
             self?.togglePalette()
+        }
+        if state.settings.snipHotkey {
+            snipHotKey = HotKey(keyCode: UInt32(kVK_ANSI_S),
+                                modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
+                self?.state.startSnip(.rect)
+            }
+        } else {
+            snipHotKey = nil
         }
         buildMainMenu()
         statusItem.menu = buildStatusMenu()

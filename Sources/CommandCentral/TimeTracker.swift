@@ -7,12 +7,15 @@ struct StudySession: Codable, Identifiable {
     var date: Date      // session start
     var seconds: Int
     var detail: String? // e.g. the task this time was spent on
+    var taskId: UUID?   // links the session to a task when tracked from one
 }
 
+// Display strings double as segment labels — keep them short so the
+// segmented picker fits narrow cards (it can't compress below label width).
 enum StatsRange: String, CaseIterable, Identifiable {
-    case week = "7 Days"
-    case month = "This Month"
-    case all = "All Time"
+    case week = "Week"
+    case month = "Month"
+    case all = "All"
     var id: String { rawValue }
 }
 
@@ -24,10 +27,12 @@ final class TimeTracker: ObservableObject {
     @Published private(set) var activeSubject: String?
     @Published private(set) var activeStart: Date?
     @Published private(set) var activeDetail: String?
+    @Published private(set) var activeTaskId: UUID?
     @Published private(set) var autoStopNotice: String?
 
     private var idleTimer: Timer?
-    private let idleLimitSeconds = 300
+    /// Set from AppSettings; 0 disables idle auto-stop entirely.
+    var idleLimitSeconds = 300
 
     private var fileURL: URL { Storage.directory.appendingPathComponent("tracker.json") }
 
@@ -52,13 +57,14 @@ final class TimeTracker: ObservableObject {
 
     // MARK: - Logging
 
-    func log(subject: String, seconds: Int, detail: String? = nil) {
+    func log(subject: String, seconds: Int, detail: String? = nil, taskId: UUID? = nil) {
         guard seconds >= 60 else { return }
         let canonical = addSubjectIfNeeded(subject)
         sessions.append(StudySession(subject: canonical,
                                      date: Date().addingTimeInterval(-Double(seconds)),
                                      seconds: seconds,
-                                     detail: detail))
+                                     detail: detail,
+                                     taskId: taskId))
         save()
     }
 
@@ -88,18 +94,19 @@ final class TimeTracker: ObservableObject {
         return Int(Date().timeIntervalSince(activeStart))
     }
 
-    func startStopwatch(_ subject: String, detail: String? = nil) {
+    func startStopwatch(_ subject: String, detail: String? = nil, taskId: UUID? = nil) {
         stopStopwatch()
         activeSubject = addSubjectIfNeeded(subject)
         activeStart = Date()
         activeDetail = detail
+        activeTaskId = taskId
         autoStopNotice = nil
         startIdleWatch()
     }
 
     func stopStopwatch() {
         if let subject = activeSubject, activeStart != nil {
-            log(subject: subject, seconds: activeSeconds, detail: activeDetail)
+            log(subject: subject, seconds: activeSeconds, detail: activeDetail, taskId: activeTaskId)
         }
         clearActive()
     }
@@ -108,6 +115,7 @@ final class TimeTracker: ObservableObject {
         activeSubject = nil
         activeStart = nil
         activeDetail = nil
+        activeTaskId = nil
         idleTimer?.invalidate()
         idleTimer = nil
     }
@@ -124,7 +132,7 @@ final class TimeTracker: ObservableObject {
     /// If you walk away mid-session, stop the stopwatch and don't count
     /// the idle stretch — keeps the hours honest.
     private func checkIdle() {
-        guard isTracking else { return }
+        guard isTracking, idleLimitSeconds > 0 else { return }
         let types: [CGEventType] = [.mouseMoved, .keyDown, .leftMouseDown,
                                     .rightMouseDown, .scrollWheel]
         let idle = types.map {
@@ -135,9 +143,10 @@ final class TimeTracker: ObservableObject {
         let counted = max(0, activeSeconds - Int(idle))
         let subject = activeSubject
         let detail = activeDetail
+        let taskId = activeTaskId
         clearActive()
         if let subject, counted >= 60 {
-            log(subject: subject, seconds: counted, detail: detail)
+            log(subject: subject, seconds: counted, detail: detail, taskId: taskId)
             autoStopNotice = "Auto-stopped — you went idle. Saved \(formatHM(counted)) to \(subject)."
         } else {
             autoStopNotice = "Auto-stopped — you went idle before a full minute was tracked."
@@ -204,6 +213,32 @@ final class TimeTracker: ObservableObject {
             totals[session.subject, default: 0] += session.seconds
         }
         return totals.map { (subject: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+    }
+
+    struct TaskTotal: Identifiable {
+        let title: String
+        let subject: String
+        let seconds: Int
+        let taskId: UUID?
+        var id: String { taskId?.uuidString ?? "detail-\(title.lowercased())" }
+    }
+
+    /// Time grouped by the task a session was tracked from (via ▶ on a task,
+    /// the Track Now task picker, or the palette). Manual entries are skipped.
+    func byTask(_ range: StatsRange) -> [TaskTotal] {
+        var totals: [String: (title: String, subject: String, seconds: Int, taskId: UUID?)] = [:]
+        for session in sessionsIn(range) {
+            guard let title = session.detail, title != "manual entry" else { continue }
+            let key = session.taskId?.uuidString ?? "detail-\(title.lowercased())"
+            var entry = totals[key] ?? (title, session.subject, 0, session.taskId)
+            entry.seconds += session.seconds
+            totals[key] = entry
+        }
+        return totals.map { TaskTotal(title: $0.value.title,
+                                      subject: $0.value.subject,
+                                      seconds: $0.value.seconds,
+                                      taskId: $0.value.taskId) }
             .sorted { $0.seconds > $1.seconds }
     }
 

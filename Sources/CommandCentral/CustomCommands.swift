@@ -8,12 +8,15 @@ struct CustomCommand: Codable, Identifiable {
 
         var id: String { rawValue }
 
+        // Segmented controls can't compress below their labels' natural
+        // width, so these must stay short — long ones overflow fixed-width
+        // cards and get clipped at the window edge.
         var label: String {
             switch self {
-            case .url: return "Open URL"
-            case .shell: return "Run Shell Command"
-            case .app: return "Open App"
-            case .folder: return "Open File/Folder"
+            case .url: return "URL"
+            case .shell: return "Shell"
+            case .app: return "App"
+            case .folder: return "Folder"
             }
         }
 

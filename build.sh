@@ -18,6 +18,14 @@ if [[ -f AppIcon.icns ]]; then
   cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-codesign --force -s - "$APP"
+# Sign with the stable dev certificate when present — TCC permissions
+# (Screen Recording etc.) are tied to the signature and break on every
+# rebuild with ad-hoc (-) signing.
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "CommandCentral Dev"; then
+  codesign --force -s "CommandCentral Dev" "$APP"
+else
+  echo "warning: 'CommandCentral Dev' certificate missing — ad-hoc signing (TCC grants will not survive rebuilds)"
+  codesign --force -s - "$APP"
+fi
 
 echo "Built $APP — launch with: open $APP"

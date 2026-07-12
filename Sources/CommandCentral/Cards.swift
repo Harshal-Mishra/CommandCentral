@@ -181,9 +181,10 @@ struct TasksCard: View {
             if !task.done {
                 Button {
                     tracker.startStopwatch(task.subject ?? tracker.subjects.first ?? "Other",
-                                           detail: task.title)
+                                           detail: task.title,
+                                           taskId: task.id)
                 } label: {
-                    Image(systemName: "play.circle")
+                    Image(systemName: isTrackingThis(task) ? "record.circle.fill" : "play.circle")
                         .font(.system(size: 14))
                         .foregroundStyle(isTrackingThis(task) ? Theme.accent : .secondary)
                 }
@@ -204,7 +205,8 @@ struct TasksCard: View {
     }
 
     private func isTrackingThis(_ task: TaskItem) -> Bool {
-        tracker.isTracking && tracker.activeDetail == task.title
+        tracker.isTracking
+            && (tracker.activeTaskId == task.id || tracker.activeDetail == task.title)
     }
 
     private func add() {

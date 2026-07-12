@@ -29,11 +29,12 @@ final class WindowsManager: ObservableObject {
     private var timer: Timer?
 
     func startMonitoring() {
+        guard timer == nil else { return }
         refresh()
-        timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        timer?.tolerance = 1
     }
 
     func stopMonitoring() {

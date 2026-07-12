@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum DashboardTab: String, CaseIterable, Identifiable {
-    case home, tracker, tasks, calendar, weather, time, map, media, windows, system, notes, clipboard, terminal, commands, settings
+    case home, tracker, tasks, calendar, weather, time, map, media, windows, system, notes, clipboard, terminal, commands, snips, settings
 
     var id: String { rawValue }
 
@@ -22,6 +22,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .terminal: return "Terminal"
         case .commands: return "Commands"
+        case .snips: return "Snips"
         case .settings: return "Settings"
         }
     }
@@ -42,16 +43,28 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard"
         case .terminal: return "terminal"
         case .commands: return "command"
+        case .snips: return "scissors"
         case .settings: return "gearshape"
         }
     }
 }
 
 struct DashboardView: View {
-    @EnvironmentObject private var stats: SystemStats
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var tabPrefs: TabPrefs
     @EnvironmentObject private var alarms: AlarmStore
+    @EnvironmentObject private var home: HomeStore
     @State private var tab: DashboardTab = .home
+    @State private var didApplyDefaultTab = false
+    @State private var tabScroll = ScrollPosition()
+    @State private var tabOverflow = TabOverflow()
+
+    private struct TabOverflow: Equatable {
+        var canLeft = false
+        var canRight = false
+        var offset: CGFloat = 0
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,18 +75,40 @@ struct DashboardView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // Retheming: Theme.accent/background are globals, so force the whole
+        // subtree to rebuild when they change.
+        .id("theme-\(settings.accent.rawValue)-\(settings.background.rawValue)")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.gradient)
-        .tint(Theme.accent)
+        .background(settings.background.gradient)
+        .tint(settings.accent.color)
         .overlay(alignment: .top) { alarmBanner }
         .onReceive(NotificationCenter.default.publisher(for: .openDashboardTab)) { note in
             if let raw = note.object as? String, let target = DashboardTab(rawValue: raw) {
-                tab = target
+                select(target)
             }
         }
         .onReceive(tabPrefs.$hidden) { _ in
-            if !tabPrefs.isVisible(tab) { tab = .home }
+            if !tabPrefs.isVisible(tab) { select(.home) }
         }
+        .onReceive(home.$widgets) { _ in
+            if tab == .home { state.updateMonitors(for: .home) }
+        }
+        .onAppear {
+            if !didApplyDefaultTab {
+                didApplyDefaultTab = true
+                if tabPrefs.isVisible(settings.defaultTab) { tab = settings.defaultTab }
+            }
+            state.currentTab = tab
+            state.updateMonitors(for: tab)
+        }
+        .onChange(of: tab) {
+            state.currentTab = tab
+            state.updateMonitors(for: tab)
+        }
+    }
+
+    private func select(_ target: DashboardTab) {
+        withAnimation(.snappy(duration: 0.22)) { tab = target }
     }
 
     @ViewBuilder
@@ -98,17 +133,17 @@ struct DashboardView: View {
     }
 
     private var header: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: clockStart, by: settings.showSeconds ? 1 : 60)) { context in
             HStack(alignment: .firstTextBaseline) {
                 Text(context.date, format: .dateTime.weekday(.wide).day().month(.wide).year())
                     .font(.system(size: 18, weight: .semibold))
                 Spacer()
-                if let battery = stats.battery {
-                    Label(battery, systemImage: "battery.75percent")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
+                if settings.showBattery {
+                    BatteryBadge()
                 }
-                Text(context.date, format: .dateTime.hour().minute().second())
+                Text(context.date, format: settings.showSeconds
+                     ? .dateTime.hour().minute().second()
+                     : .dateTime.hour().minute())
                     .font(.system(size: 22, weight: .light).monospacedDigit())
             }
             .padding(.horizontal, 18)
@@ -117,32 +152,57 @@ struct DashboardView: View {
         }
     }
 
+    /// Without seconds the clock only re-renders on real minute boundaries.
+    private var clockStart: Date {
+        guard !settings.showSeconds else { return .now }
+        return Calendar.current.nextDate(after: .now,
+                                         matching: DateComponents(second: 0),
+                                         matchingPolicy: .nextTime) ?? .now
+    }
+
+    // Icon pills (optionally with names, per Settings). If the row outgrows
+    // the window it scrolls — trackpad swipe or the edge chevrons.
     private var tabBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
+            if tabOverflow.canLeft {
+                chevron("chevron.left") { scrollTabs(-260) }
+                    .padding(.leading, 8)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     ForEach(tabPrefs.visibleTabs) { item in
-                        Button {
-                            tab = item
-                        } label: {
-                            Label(item.title, systemImage: item.icon)
-                                .font(.system(size: 12, weight: tab == item ? .semibold : .regular))
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 6)
-                                .background(tab == item ? Theme.accent.opacity(0.28) : .clear,
-                                            in: Capsule())
-                                .foregroundStyle(tab == item ? .white : Color.secondary)
-                        }
-                        .buttonStyle(.plain)
+                        TabPill(item: item,
+                                isSelected: tab == item,
+                                alwaysLabel: settings.tabLabels) { select(item) }
+                            .id(item)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.leading, 14)
+                .padding(.vertical, 2)
+            }
+            .scrollPosition($tabScroll)
+            .onScrollGeometryChange(for: TabOverflow.self) { geo in
+                TabOverflow(canLeft: geo.contentOffset.x > 4,
+                            canRight: geo.contentOffset.x + geo.containerSize.width
+                                      < geo.contentSize.width - 4,
+                            offset: geo.contentOffset.x)
+            } action: { _, new in
+                tabOverflow = new
+            }
+            .onChange(of: tab) {
+                withAnimation(.snappy(duration: 0.22)) {
+                    tabScroll.scrollTo(id: tab)
+                }
+            }
+            if tabOverflow.canRight {
+                chevron("chevron.right") { scrollTabs(260) }
             }
             // Every tab — even hidden ones — stays reachable here.
             Menu {
                 ForEach(tabPrefs.orderedTabs) { item in
                     Button {
-                        tab = item
+                        select(item)
                     } label: {
                         Label(item.title + (tabPrefs.isVisible(item) ? "" : "  (hidden)"),
                               systemImage: item.icon)
@@ -159,7 +219,26 @@ struct DashboardView: View {
             .help("All tabs")
             .padding(.trailing, 14)
         }
-        .padding(.bottom, 10)
+        .padding(.bottom, 8)
+    }
+
+    private func chevron(_ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 24)
+                .background(Color.white.opacity(0.06), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Scroll tabs")
+    }
+
+    private func scrollTabs(_ delta: CGFloat) {
+        withAnimation(.snappy(duration: 0.25)) {
+            tabScroll.scrollTo(x: max(0, tabOverflow.offset + delta))
+        }
     }
 
     @ViewBuilder
@@ -179,7 +258,63 @@ struct DashboardView: View {
         case .clipboard: ClipboardView()
         case .terminal: TerminalTabView()
         case .commands: CommandsTabView()
+        case .snips: SnipsTabView()
         case .settings: SettingsTabView()
+        }
+    }
+}
+
+/// One tab in the bar. Icon-only by default (the selected one stretches to
+/// show its title); with `alwaysLabel` every pill keeps its name visible.
+private struct TabPill: View {
+    let item: DashboardTab
+    let isSelected: Bool
+    var alwaysLabel = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    private var showsLabel: Bool { alwaysLabel || isSelected }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                if showsLabel {
+                    Text(item.title)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .fixedSize()
+                        .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, showsLabel ? 12 : 9)
+            .padding(.vertical, 7)
+            .background(background, in: Capsule())
+            .foregroundStyle(isSelected ? .white : hovering ? Color.primary : Color.secondary)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(item.title)
+        .onHover { hovering = $0 }
+    }
+
+    private var background: AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(Theme.accent.opacity(0.30)) }
+        if hovering { return AnyShapeStyle(Color.white.opacity(0.08)) }
+        return AnyShapeStyle(Color.clear)
+    }
+}
+
+/// Battery text lives in its own view so SystemStats updates only
+/// re-render this label, not the whole dashboard.
+private struct BatteryBadge: View {
+    @EnvironmentObject private var stats: SystemStats
+
+    var body: some View {
+        if let battery = stats.battery {
+            Label(battery, systemImage: "battery.75percent")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
         }
     }
 }
